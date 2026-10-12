@@ -32,7 +32,7 @@ export SADK_ADVERTISE_IP=203.0.113.10     # the IP address players reach the ser
 python -m sadk_lobby
 ```
 
-Ports: `7070` lobby, `7071` chat, `5479` village, `7072` / `7073` host bridge. `packaging/server-README.md` is
+Ports: `7070` lobby, `7071` chat, `5477` village, `5481` referee, `7072` / `7073` host bridge. `packaging/server-README.md` is
 the full guide for server operators.
 
 Players run SAdK-ServerConfig, enter the server's address and press Save. The mod loader and the mods need
