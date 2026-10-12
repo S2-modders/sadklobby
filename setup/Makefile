@@ -22,7 +22,7 @@ res.o: serverconfig.rc resource.h serverconfig.manifest sadk.ico build/wsock32.d
 $(SHIM): FORCE
 	$(MAKE) -C $(SADKMOD)/shim
 
-$(MODS): FORCE
+$(MODS) &: FORCE
 	$(MAKE) -C ../mods
 
 FORCE:
