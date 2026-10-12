@@ -78,9 +78,9 @@ def test_open_buy_sell():
     economy.handle_buy(None, PERM, BitWriter().write(31, 32).write(1, 16).write(1, 16)
                        .write(0xFFFF, 16).bytes())
     assert _msgs() == [economy.MSG_SHOP_BUY_RESULT]
-    # sell it back for 60 * 0.9 = 54
+    # sell it back at the open shop's own Sell value for item 7 (what the client shows in its confirm box)
     economy.handle_sell(None, PERM, BitWriter().write(31, 32).write(0, 16).write(1, 16).bytes())
-    assert _purse()[3] == config.START_GOLD - 100 + int(340 // 2 * economy.SELL_MOD)   # item 7 lists at 340
+    assert _purse()[3] == config.START_GOLD - 100 + dict((i, sell) for i, _b, sell in STOCK)[7]
     assert _backpack()[1][0] == (0, 0, 0)
     sent.clear()
     print("shop open / buy / refused buy / sell OK")

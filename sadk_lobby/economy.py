@@ -100,8 +100,7 @@ DEBUG_BACKPACK = (2, 17, 18, 19, 33, 34, 35, 36, 1, 3, 30, 21, 22, 23, 24, 5, 7,
 
 
 def shop_stock(ids=None):
-    """Items at their real price (all of them when `ids` is None); selling back pays half
-    (× SELL_MOD on top)."""
+    """Items at their real price (all of them when `ids` is None); the listing shop buys back at half."""
     return tuple((i, price, price // 2) for i, _n, _m, price in ITEMS if ids is None or i in ids)
 
 
@@ -430,10 +429,18 @@ def handle_sell(conn, perm_id, data):
         if rec is not None:
             item_id, count, sltt = rec
             qty = min(max(qty, 1), count)
-            # Any trader buys any item at half its listed price (× SellMod) — selling a hat to the
-            # pet trader paid 0 when only the open shop's stock was consulted (live 2026-10-07).
-            listed = {i: p for i, _n, _m, p in ITEMS}
-            price = int(listed.get(item_id, 0) // 2 * SELL_MOD) * qty
+            # The amount is what the client shows in its confirm box (GetShopSellPriceByItemId S 0046d6d0): the
+            # open shop's own Sell value for an item it lists [live 2026-10-12: item 23 shown as 75, the
+            # stock's Sell = price // 2]. A trader that does not list the item shows the same price
+            # (maintainer, 2026-10-12; the client's value there was not captured by a hook, and the static
+            # reading "base value x SellMod" does not say which base value: TODO). Any trader buys any item:
+            # selling a hat to the pet trader paid 0 when only the open shop's stock was consulted (live
+            # 2026-10-07).
+            stock = w.open_shop[2] if w.open_shop and w.open_shop[1] == shop_id else ()
+            in_stock = {i: sell for i, _buy, sell in stock}
+            base = {i: p for i, _n, _m, p in ITEMS}
+            unit = in_stock[item_id] if item_id in in_stock else base.get(item_id, 0) // 2
+            price = unit * qty
             w.gold += price
             w.backpack[backpack] = (item_id, count - qty, sltt) if count > qty else None
             ok, why = True, f"item {item_id} x{qty} for {price} gold"

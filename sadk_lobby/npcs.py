@@ -246,8 +246,10 @@ def make_village_npcs(center):
             actions=((ACT_HALL_OF_FAME, "Ruhmeshalle"),)),
         Npc(NPC_ID_BASE + 7, "Herold Hartmut", npctyp=NPCTYP_SETTLER,
             anchor=(-29.88, 4.55, 47.02), rot_deg=210.9, colours=(3, 1, 5, 4), npcidx=3,
-            actions=((ACT_LIST_GAMES, "Partien ansehen"),
-                     (ACT_HOST_GAME, "Partie eröffnen"))),
+            # One action only: the client runs a selected NPC's action by itself when it is the only one, and
+            # offers no way to pick between two (live 2026-10-12: with two actions he did nothing). The game
+            # browser he opens also has the button to host a match.
+            actions=((ACT_LIST_GAMES, "Partien ansehen"),)),
         Npc(NPC_ID_BASE + 8, "Spielmeister Silas", npctyp=NPCTYP_SETTLER,
             anchor=(18.6, 2.64, 68.55), rot_deg=210.9, zone=3, colours=(5, 2, 0, 2), npcidx=4,
             actions=((ACT_MINIGAME + 3 - 2, "Minispiel"),)),        # his tavern is scene 3

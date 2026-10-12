@@ -868,11 +868,11 @@ bool SADK_THISCALL on_send_ready(Manager *mgr, bool ready)
 // ── Session events (sadk::events) ────────────────────────────────────────────────────────────────────────────────
 // Host: someone joins. The host handles its own UserInformation too, under the host id 0xEFFFFFCC (the id
 // RequestFileFromHost sends to; KickPlayer S 0040b470 never kicks it): only remote players count.
-// NComm_Manager_NetworkVcall_30 S 004089a0 (network object +0x340, vtable slot 0x30) is excluded as well
+// NComm_Manager::GetLocalNetId S 004089a0 (network object +0x340, vtable slot 0x30) is excluded as well
 // [inferred: this side's own net id].
 void note_joiner(Manager *m, std::int32_t source)
 {
-    if (static_cast<std::uint32_t>(source) == HOST_NET_ID || source == fn::NComm_Manager_NetworkVcall_30(m)) return;
+    if (static_cast<std::uint32_t>(source) == HOST_NET_ID || source == static_cast<std::int32_t>(fn::NComm_Manager::GetLocalNetId(m))) return;
     for (auto &j : joiners)
         if (j.net_id == source) return;
     joiners.push_back(Joiner{source, GetTickCount(), false});
