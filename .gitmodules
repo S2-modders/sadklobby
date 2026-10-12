@@ -1,0 +1,3 @@
+[submodule "sadkmod"]
+	path = sadkmod
+	url = ../sadkmod.git
