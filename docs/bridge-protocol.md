@@ -2,7 +2,7 @@
 
 Makes a hosted game joinable when the host cannot accept incoming connections. Two parts:
 
-- **Client** — the mod `mods/gamebridge`, loaded by the shim (`bridge/wsock32_shim/`, a proxy `wsock32.dll`
+- **Client** — the mod `mods/gamebridge`, loaded by the shim (sadkmod's `shim/`, a proxy `wsock32.dll`
   placed next to `SADK.exe`). It hooks the shim's `connect`, `send`, `listen` and `closesocket` exports, which carry
   all of TinCat's sockets. Below, "the shim" means this client side.
 - **Stub** — `sadk_lobby/bridge.py`.
@@ -11,7 +11,7 @@ Neither the game nor TinCat is modified. A client without the mod keeps working.
 
 ## Why a bridge is needed [known, static]
 
-See `docs/message-catalog.md`, "Pre-game room → Reachability":
+See `docs/message-catalog.md` in SAdK-Resurrected, "Pre-game room → Reachability":
 
 - The host's match transport is a TinCat server, and a TinCat server cannot dial out.
 - Joiners dial the ip:port of the game's 170 descriptor directly (`GameServerInfo::JoinGame` S 0048d030).

@@ -1,0 +1,21 @@
+# The game's message schema: copyrighted, every server operator supplies their own copy
+/sadk_lobby/data/msgdefs.ini
+
+# Live server data: accounts, password hashes, mail (never publish)
+/sadk_players.json*
+/sadk_mail.json*
+/npc_positions.json
+/sadk_captures/
+*.log
+*.log.*
+
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+.venv*/
+.pytest_cache/
+
+# Builds
+build/
+/release/
