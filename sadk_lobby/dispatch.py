@@ -20,7 +20,7 @@ import threading
 import time
 
 from . import (bridge, buddies, chat, codec, config, crypto, economy, mail, minigames, msgdefs, npcs, rewards,
-               players, referee, registry, store, village)
+               players, referee, registry, store, village, wagers)
 from .log import log
 
 HANDLERS = {}
@@ -83,6 +83,9 @@ def on_conn_closed(conn):
     prompt us for the second 1006 — we must send it ourselves, and the right trigger is the UC socket
     actually going away. That is what this hook is for.
     """
+    if getattr(conn, "is_referee", False):
+        # A player whose referee connection closes before it reported the match's end has left it.
+        wagers.connection_closed(_player(conn).perm_id)
     with _live_lock:
         try:
             _live.remove(conn)
@@ -1840,6 +1843,7 @@ def _reward_notice(avatar_id, minutes, chests, won, xp, gold):
 
 
 rewards.NOTIFY = _reward_notice
+wagers.NOTIFY = _notify
 
 
 def _h_color_change(conn, data):

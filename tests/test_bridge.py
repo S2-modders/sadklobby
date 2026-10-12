@@ -7,11 +7,14 @@ Run:  python tests/test_bridge.py
 import os
 import socket
 import sys
+import tempfile
 import time
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO not in sys.path:
     sys.path.insert(0, REPO)
+
+os.environ.setdefault("SADK_STORE_PATH", os.path.join(tempfile.mkdtemp(), "players.json"))  # never touch the real store
 
 from sadk_lobby import bridge, config, registry  # noqa: E402
 

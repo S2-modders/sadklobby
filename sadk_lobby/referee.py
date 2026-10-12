@@ -42,7 +42,7 @@ prior (removed) attempt converged on after live tests; re-confirm it against the
 """
 import struct
 
-from . import config, rewards
+from . import config, rewards, wagers
 from .log import hex_dump, log
 from .tincat import app_payload, bytes_field, build_frame
 
@@ -113,11 +113,18 @@ def build_register_game_ack(game_id, result=0):
     return referee_payload(config.REF_REGISTER_ACK, _u32(game_id) + _u32(result))
 
 
-def build_register_game_result(game_id, result=0, game_seed=None):
-    """RegisterGameResult (0xDB8): GameID(u32), Result(u32; 0=ok), GameSeed(u32). Always Result=0 so the
-    client takes the success path and reads the seed."""
+def build_register_game_result(game_id, result=0, game_seed=None, fail_reason=b""):
+    """RegisterGameResult (0xDB8): GameID(u32), Result(u32), then GameSeed(u32) when Result is 0 (the
+    client starts the match), else FailReason (u8 length + bytes; the client shows REGISTER_GAME_FAILED
+    and logs out of the referee). Never both. [known, S 0047a580; the refusal is not live-tested: TODO]"""
+    if result:
+        if not 1 <= result <= 20:
+            raise ValueError(f"RegisterGameResult result {result} outside the ERefereeResult names 1..20")
+        fail_reason = fail_reason[:255]
+        return referee_payload(config.REF_REGISTER_RESULT,
+                               _u32(game_id) + _u32(result) + bytes([len(fail_reason)]) + fail_reason)
     game_seed = config.REF_GAME_SEED if game_seed is None else game_seed
-    return referee_payload(config.REF_REGISTER_RESULT, _u32(game_id) + _u32(result) + _u32(game_seed))
+    return referee_payload(config.REF_REGISTER_RESULT, _u32(game_id) + _u32(0) + _u32(game_seed))
 
 
 def build_giveup_ack(game_id, result=0):
@@ -236,16 +243,28 @@ def handle_frame(conn, payload):
 
     me = getattr(getattr(conn, "player", None), "perm_id", 0)
     if msg_id == config.REF_REGISTER_GAME:
-        rewards.match_started(game_id, me)                  # the player's match clock starts
-        log(f"  [REFEREE] RegisterGame(0xDB6) GameID={game_id} → Ack(0xDB7,0) + Result(0xDB8,0,"
-            f"GameSeed=0x{config.REF_GAME_SEED:x})")
+        # The wager and the player list (wagers.py). A body the parser cannot read is a match without
+        # a wager: the registration itself must never fail on it.
+        _, inner = _inner(payload)
+        wager, ai_count, avatars = wagers.parse_register_game(inner) or (0, 0, ())
+        refusal = wagers.register(game_id, me, wager, avatars)
         _send(conn, build_register_game_ack(game_id), "RegisterGameAck(0xDB7, Result=0)")
-        _send(conn, build_register_game_result(game_id), "RegisterGameResult(0xDB8, Result=0, GameSeed)")
+        if refusal:
+            log(f"  [REFEREE] RegisterGame(0xDB6) GameID={game_id} wager={wager} players={avatars} "
+                f"→ REFUSED, Result(0xDB8,{refusal})")
+            _send(conn, build_register_game_result(game_id, refusal),
+                  f"RegisterGameResult(0xDB8, Result={refusal})")
+        else:
+            rewards.match_started(game_id, me)              # the player's match clock starts
+            log(f"  [REFEREE] RegisterGame(0xDB6) GameID={game_id} wager={wager} ai={ai_count} "
+                f"players={avatars} → Ack(0xDB7,0) + Result(0xDB8,0,GameSeed=0x{config.REF_GAME_SEED:x})")
+            _send(conn, build_register_game_result(game_id), "RegisterGameResult(0xDB8, Result=0, GameSeed)")
     elif msg_id == config.REF_GIVEUP_GAME:
         # GiveUpGame: GameID(32), MapGUID(128). The client shows "Finalizing..." and may resend every
         # frame until a matching 0xDD5 arrives, so answering every repeat is correct.
         log(f"  [REFEREE] GiveUpGame(0xDD4) GameID={game_id} → GiveUpGameAcknowledge(0xDD5, Result=0)")
         rewards.match_finished(game_id, me, won=False)      # once; repeats find no running match
+        wagers.report(game_id, me, None)
         _send(conn, build_giveup_ack(game_id), f"GiveUpGameAcknowledge(0xDD5, GameID={game_id}, Result=0)")
     elif msg_id == config.REF_FINISH_GAME:
         # FinishGame: GameID(32), MapGUID(128), MapSettings(u8 len + 3 digits), Winner(32).
@@ -262,6 +281,7 @@ def handle_frame(conn, payload):
         _send(conn, build_finish_ack(game_id), f"FinishGameAcknowledge(0xDC1, GameID={game_id}, Result=0)")
         _send(conn, build_finish_result(game_id), f"FinishGameResult(0xDC2, GameID={game_id}, Result=0)")
         rewards.match_finished(game_id, perm, won=(winner == perm))
+        wagers.report(game_id, perm, winner)
     elif msg_id == config.REF_CLAIM_CHEST:
         # ClaimChest: GameID(32), MapGUID(128 raw), ActorID(32), ChestID(32) — byte-aligned.
         _, inner = _inner(payload)
