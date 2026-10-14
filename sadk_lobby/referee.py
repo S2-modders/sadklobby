@@ -166,8 +166,11 @@ def build_claim_result(avatar_id, chest_id, text=b""):
 
 
 # ── Match-end state (server decisions, docs/message-catalog.md H19 / H22) ────────
-# Chest ownership per game: the FIRST claimant of a chest gets it, and every later claim of the same
-# chest is answered with that same winner, so all clients agree on who holds it. (H22; the client
+# Chest ownership per game: the chest belongs to its opener, the ActorID of the claim, and every claim
+# of the same chest is answered with that owner, so all clients agree on who holds it. Every client
+# sends a claim for every opened chest, all naming the same ActorID: the avatar id of the player whose
+# territory opened it (Referee_OnChestOpened_SendClaimChest S 00782a60 [known]; live 2026-10-14, both
+# clients' claims 30 ms apart). The first claim to arrive is a race, not the owner. (H22; the client
 # accepts any non-zero AvatarID as success.)
 _chest_owner = {}            # (game_id, chest_id) -> avatar_id
 # FinishGame reports per game: every client that evaluates victory sends one. (H19: accept every
@@ -288,11 +291,11 @@ def handle_frame(conn, payload):
         actor_id, chest_id = _field_u32(inner, 20), _field_u32(inner, 24)
         claimant = getattr(getattr(conn, "player", None), "perm_id", 0) or actor_id
         first = (game_id, chest_id) not in _chest_owner
-        owner = _chest_owner.setdefault((game_id, chest_id), claimant)
+        owner = _chest_owner.setdefault((game_id, chest_id), actor_id or claimant)
         if first:
             rewards.grant_chest(owner, f"chest {chest_id} in match {game_id}", game_id)
         log(f"  [REFEREE] ClaimChest(0xDAC) GameID={game_id} chest={chest_id} actor={actor_id} "
-            f"claimant={claimant} → owner {owner}{' (first claim)' if owner == claimant else ' (already claimed)'}")
+            f"claimant={claimant} → owner {owner}{' (first claim)' if first else ' (already claimed)'}")
         _send(conn, build_claim_ack(game_id), f"ClaimChestAcknowledge(0xDAD, GameID={game_id}, Result=0)")
         _send(conn, build_claim_result(owner, chest_id),
               f"ClaimChestResult(0xDAE, AvatarID={owner}, ChestID={chest_id})")

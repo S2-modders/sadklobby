@@ -129,21 +129,22 @@ def test_finish_game_ack_then_result():
     print("FinishGame → 0xDC1 + 0xDC2 OK")
 
 
-def test_claim_chest_first_claimant_wins():
+def test_claim_chest_belongs_to_the_opener():
     referee._chest_owner.clear()
     a = FakeConn()
     b = FakeConn()
     b.player = players.resolve_by_perm(PERM_ID + 1)
+    opener = b.player.perm_id                     # every client names the opener as ActorID
     body = lambda actor: struct.pack(">I", GAME_ID) + _guid() + struct.pack(">II", actor, 9)
-    referee.handle_frame(a, referee.referee_payload(config.REF_CLAIM_CHEST, body(500)))
-    referee.handle_frame(b, referee.referee_payload(config.REF_CLAIM_CHEST, body(501)))
+    referee.handle_frame(a, referee.referee_payload(config.REF_CLAIM_CHEST, body(opener)))   # a's claim arrives first
+    referee.handle_frame(b, referee.referee_payload(config.REF_CLAIM_CHEST, body(opener)))
     for conn in (a, b):
         assert conn.referee_msg_ids()[-2:] == [config.REF_CLAIM_ACK, config.REF_CLAIM_RESULT]
         _, ack = _parse_referee_payload(conn.raw[-2][config.PREFIX_SIZE:])
         assert struct.unpack(">II", ack) == (GAME_ID, 0)          # Result is ALWAYS 0
         _, res = _parse_referee_payload(conn.raw[-1][config.PREFIX_SIZE:])
-        assert struct.unpack_from(">II", res) == (a.player.perm_id, 9) and res[8] == 0, res.hex()
-    print("ClaimChest → 0xDAD(0) + 0xDAE, first claimant keeps the chest OK")
+        assert struct.unpack_from(">II", res) == (opener, 9) and res[8] == 0, res.hex()
+    print("ClaimChest → 0xDAD(0) + 0xDAE, the opener keeps the chest whoever claims first OK")
 
 
 if __name__ == "__main__":
@@ -154,5 +155,5 @@ if __name__ == "__main__":
     test_base_login_frame_falls_through()
     test_giveup_echoes_game_id()
     test_finish_game_ack_then_result()
-    test_claim_chest_first_claimant_wins()
+    test_claim_chest_belongs_to_the_opener()
     print("\nALL REFEREE TESTS PASSED")

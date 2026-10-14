@@ -137,6 +137,15 @@ def _balance(t, perm_id):
     return w.glod if t.play_money else w.gold
 
 
+def _seat_accnt(t, perm_id):
+    """The seat's `accnt`. The client reads it in one place only: the top-up dialog offers
+    `avatar money - accnt` (`MinigameDialog::OpenSetStackDialog` S 00461470, getter S 00471930), so
+    it is an amount of the avatar's money not to offer again at this table. The stake is already
+    taken off the wallet when the player sits down (`_book`), so nothing is left to hold back: 0.
+    Sending the account balance here made the dialog offer 0 [live, 2026-10-14]."""
+    return 0
+
+
 def _book(t, perm_id, delta):
     """Move `delta` into (+) or out of (-) the player's account in the table's currency."""
     w = economy.wallet(perm_id)
@@ -216,7 +225,7 @@ def table_body(t, settings=True, seats=True, state=True):
         for sltidx, perm in sorted(t.seats.items()):
             w.write(sltidx, 8)
             write_packed(w, t.credits.get(perm, 0))               # the stack, bets included
-            write_packed(w, _balance(t, perm))                    # accnt = account balance [inferred]
+            write_packed(w, _seat_accnt(t, perm))                 # accnt
             for b in t.bets.get(perm, [0] * 11):
                 write_packed(w, b)
     return w.bytes()
@@ -673,7 +682,7 @@ def _poker_state(w, t):
             flags |= poker.ACTN_ALLIN
         w.write(flags | (h.last_code.get(p, 0) & 0x7FF if h else 0), 16)
         write_packed(w, t.credits.get(p, 0))                                     # crdts = stack
-        write_packed(w, _balance(t, p))                                          # accnt
+        write_packed(w, _seat_accnt(t, p))                                       # accnt
     pots = h.collect if (h and t.phase == 8 and h.collect) else _pots(t)
     per_pot_wagers = bool(h and t.phase == 8 and h.collect)
     w.write((0x80 if per_pot_wagers else 0) | len(pots), 8)                     # ptncnt (<= 8)
@@ -1002,7 +1011,7 @@ def _chess_state(w, t):
     for s, p in sorted(t.seats.items()):
         w.write(s, 8)
         write_packed(w, t.credits.get(p, 0))
-        write_packed(w, _balance(t, p))
+        write_packed(w, _seat_accnt(t, p))                                         # accnt
 
 
 def _chess_bump(t):

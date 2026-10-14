@@ -204,7 +204,7 @@ def test_play_money_table():
     assert decode(io.last(mg.MSG_CREATE))["play_money"]       # mngt bit5 (S 004712b0)
     assert economy.wallet(A).glod == economy.config.START_GOLD - 70
     assert economy.wallet(A).gold == economy.config.START_GOLD
-    assert decode(io.last(mg.MSG_UPDATE))["players"][0][2] == economy.wallet(A).glod   # accnt
+    assert decode(io.last(mg.MSG_UPDATE))["players"][0][2] == 0   # accnt: nothing held back (_seat_accnt)
     assert t.mxplyr == 4
     print("play-money tables use glod and set mngt bit5 OK")
 
