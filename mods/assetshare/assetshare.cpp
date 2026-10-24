@@ -27,8 +27,9 @@
 //
 // Every transfer is an archive (archive.hpp): LZMS-compressed when both sides can (Windows 8+), stored otherwise,
 // and sent in 4 KB blocks whatever the host's connection type (S2TftpSession::BeginSend S 00426a30). The build
-// checksum, which the game sends before any transfer, leaves out server mods' files on both sides
-// (GameData_ComputeBuildChecksum S 005ab800): server mods are matched here instead.
+// checksum, which the game sends before any transfer, is taken over the game's original files on both sides, every
+// mod's files left out (GameData_ComputeBuildChecksum S 005ab800): mods may replace scripts and settings, and server
+// mods are matched here instead.
 //
 // Settings: assetshare.ini [AssetShare] AcceptServerMaps, AcceptServerMods (false: refuse those downloads).
 //
@@ -511,8 +512,8 @@ void flush_deferred_maps(Manager *m);
 void apply_host_set(Manager *m, const std::vector<HostMod> &host_mods);
 
 // No manifest (no assetshare on the host, or an older one): the host runs no server mods we could get, so ours are
-// switched off for this game, as for a host that runs none. Its stock checksum still matches ours, since server mods'
-// files are left out of it.
+// switched off for this game, as for a host that runs none. Its checksum still matches ours, since mods' files are left
+// out of it.
 void no_manifest(Manager *m, const char *why)
 {
     log("no manifest from the host (%s): this game runs without server mods", why);
@@ -945,14 +946,14 @@ void on_session_end(void *)
 }
 
 // ── Other hooks ──────────────────────────────────────────────────────────────────────────────────────────────────
-// The build checksum leaves out server mods' files (see the top): sadkmod's redirection of their files is off while
+// The build checksum covers the game's original files (see the top): sadkmod's file redirect is off for every mod while
 // the game computes it.
 using Checksum = sadk::Hook<fn::GameData_ComputeBuildChecksum>;
 std::uint32_t SADK_CDECL on_checksum(std::int32_t *count, std::int32_t *size)
 {
-    sadk::mods::redirect_server_mods(false);
+    sadk::mods::redirect_mods(false);
     std::uint32_t cs = Checksum::original(count, size);
-    sadk::mods::redirect_server_mods(true);
+    sadk::mods::redirect_mods(true);
     return cs;
 }
 
@@ -1048,7 +1049,7 @@ bool assetshare_start()
     ok += sadk::patch_calls(net::S2TftpSession::CloseFile, fn::_remove, (void *)on_abort_remove, "download abort", 1);
     int hooks = BeginSend::install(on_begin_send, "S2TFTP: 4 KB blocks; who asks for the manifest") +
                 RequestFile::install(on_request_file, "map requests as archives") +
-                Checksum::install(on_checksum, "build checksum without server mods' files") +
+                Checksum::install(on_checksum, "build checksum over the original files") +
                 GameSettings::install(on_game_settings, "maps advertised as downloadable") +
                 LobbyGameText::install(on_lobby_game_text, "hosted games say (sharing)");
     int subscribed = sadk::events::on_net_event(on_net_event) + sadk::events::on_frame(on_frame) +   // join, manifest
