@@ -8,8 +8,9 @@
 //   1. NComm_Manager::SetGameSettings S 0040bfd0 (hook), while hosting a network game: every map goes out as
 //      type 3 with downloads allowed (OnMapSelected S 00454ad0 passes the map's own type and 0).
 //   2. SelectMapDialog::RefreshMapList S 0045a300: also list Documents\SAdK\maps (location 3).
-//   3. S2Tftp_Session_ReadNextBlock S 00426ac0 (host serving a file): only maps and assetshare's own files;
-//      a map that is not in Documents\SAdK\maps is served from the game's own map folder.
+//   3. S2Tftp_Session_ReadNextBlock S 00426ac0 (host serving a file): only maps and assetshare's own files; a map
+//      is served from the folder the game itself takes it from (hosted_map_path): the game's own map folder first,
+//      then Documents\SAdK\maps.
 //   4. S2TftpSession::CloseFile S 00427990 (joiner finishing a download): the host-chosen file name may only land in
 //      Documents\SAdK\maps as .s2m/.bmp, or in assetshare's download folder.
 // Starting a match while the joiner still lacks the map crashes the client, so "ready" is refused until the map is
@@ -198,6 +199,7 @@ std::vector<std::string> summary;       // "rules 3 (downloaded)" ...
 std::vector<std::string> refused;       // mods this game needs that we will not download (AcceptServerMods)
 std::vector<std::string> failed;        // mods this game needs that could not be downloaded or set up
 std::vector<std::pair<std::string, std::string>> deferred_maps;   // (remote, local) asked before the manifest came
+std::vector<std::pair<std::string, std::string>> received_maps;   // (map file, session map GUID) stored in this session
 std::vector<std::string> leftovers;     // .temp_ folders that could not be removed yet
 
 struct HostMod {
@@ -246,6 +248,38 @@ bool session_map_present(Manager *mgr)
     auto *g = static_cast<game::NComm::NetGUID *>(fn::NComm::EventGameInformation::GetMapGuid(info, guid));
     fn::NComm::NetGUID::ToUUID(g, uuid);
     return fn::GameFile_FindMapByGuidAnyType(uuid, &name, &type);
+}
+
+// The session's map GUID as text, to tell the host's next map from the same map announced again.
+std::string session_map_guid(Manager *mgr)
+{
+    alignas(4) unsigned char out[32] = {};
+    auto *g = static_cast<game::NComm::NetGUID *>(fn::NComm::EventGameInformation::GetMapGuid(&mgr->gameInformation, out));
+    char hex[40];
+    std::snprintf(hex, sizeof hex, "%08x%08x%08x%08x", unsigned(g->data1), unsigned(g->data2), unsigned(g->data3),
+                  unsigned(g->data4));
+    return hex;
+}
+
+// A map file stored in this session (unpacked, or received plain).
+void note_received_map(const std::string &file)
+{
+    if (Manager *m = manager()) received_maps.emplace_back(file, session_map_guid(m));
+}
+
+// Whether the game asks again for a map file this side stored while the session announced the same map GUID: the
+// file it got is not the hosted map (another version of it), and asking again would bring the same file. Two causes
+// on the host's side: two copies of the map and an assetshare that sent the one the game does not play (before
+// hosted_map_path), or a stale header cache. The GUID the host announces comes from <Local AppData>\SAdK\<map>.info
+// (.usermapinfo for a map found through the type-3 fallback), which GameFile_LoadMapInfoCached S 005aa030 uses
+// instead of the map file whenever the cache is the newer of the two (File_CompareWriteTime S 006e7270): a newer
+// version of the map copied in with its old modification time keeps the old version's GUID.
+bool received_already(Manager *m, const std::string &file)
+{
+    std::string guid = session_map_guid(m);
+    for (auto &[name, g] : received_maps)
+        if (!_stricmp(name.c_str(), file.c_str()) && g == guid) return true;
+    return false;
 }
 
 // ── Mods: what the host has, what we have ───────────────────────────────────────────────────────────────────────
@@ -365,20 +399,36 @@ void add_map_companions(const std::string &path, const std::string &file, std::v
     }
 }
 
-// A map file from Documents\SAdK\maps, else from the game's own free-game maps, with what belongs to it.
+bool exists(const std::string &path) { return GetFileAttributesA(path.c_str()) != INVALID_FILE_ATTRIBUTES; }
+
+// Where the host serves a map file (.s2m, .bmp) from: the folder it plays the map from. The GUID it announces comes
+// from the header that OnMapSelected S 00454ad0 reads with GameFile_LoadMapInfo(name, type 0, fallbacks) S 005aaa30,
+// which takes data\game\maps\Freegamemaps\<map>.s2m before Documents\SAdK\maps\<map>.s2m (its type-3 fallback).
+// A host with two different copies of a map plays and announces the stock folder's: the other copy has another GUID,
+// so a joiner that got it would still lack the map and ask for it again with every GameInformation
+// (NComm_Manager::HandleEvent S 0040e560). The folder that holds <map>.s2m decides for all of the map's files; a
+// file missing there is taken from the other folder. "" if neither has it.
+std::string hosted_map_path(const std::string &file)
+{
+    std::string stock = sadk::game_path("data\\game\\maps\\Freegamemaps\\"), base = file.substr(0, file.size() - 4);
+    bool stock_first = exists(stock + base + ".s2m");
+    for (const std::string &dir : {stock_first ? stock : maps_dir, stock_first ? maps_dir : stock})
+        if (exists(dir + file)) return dir + file;
+    return {};
+}
+
+// A map file from the folder the host plays it from (hosted_map_path), with what belongs to it.
 bool map_entries(const std::string &file, std::vector<archive::Entry> &entries, std::string &label)
 {
     std::vector<std::uint8_t> data;
-    std::string path = maps_dir + file;
-    if (!map_file_name(path.c_str())) return false;
-    if (GetFileAttributesA(path.c_str()) == INVALID_FILE_ATTRIBUTES)
-        path = sadk::game_path("data\\game\\maps\\Freegamemaps\\") + file;
-    if (!archive::read_file(path, data)) {
+    if (!map_file_name((maps_dir + file).c_str())) return false;
+    std::string path = hosted_map_path(file);
+    if (path.empty() || !archive::read_file(path, data)) {
         log("serve: map file %s not found", file.c_str());
         return false;
     }
     entries.push_back({file, std::move(data)});
-    label = "map file " + file;
+    label = "map file " + file + (starts_with_icase(path, maps_dir) ? "" : " (from the game's map folder)");
     if (has_ext(file, ".s2m")) {
         add_map_companions(path, file, entries);
         if (entries.size() > 1) label += " with " + std::to_string(entries.size() - 1) + " file(s) that belong to it";
@@ -431,17 +481,13 @@ std::uint32_t SADK_CDECL serve_fopen(GameFILE **f, char *path, char *mode)
         log("serve: refused a request for %s (not a map file)", path);
         return FILE_NOT_FOUND;
     }
-    if (GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES) {
-        log("serve: map file %s (plain)", name);
-        return fn::_fopen_s(f, path, mode);
+    std::string file = hosted_map_path(name);
+    if (file.empty()) {
+        log("serve: %s not found", name);
+        return FILE_NOT_FOUND;
     }
-    std::string stock = sadk::game_path("data\\game\\maps\\Freegamemaps\\") + name;
-    if (GetFileAttributesA(stock.c_str()) != INVALID_FILE_ATTRIBUTES) {
-        log("serve: map file %s (plain, from the game's map folder)", name);
-        return fn::_fopen_s(f, stock.data(), mode);
-    }
-    log("serve: %s not found", name);
-    return FILE_NOT_FOUND;
+    log("serve: map file %s (plain%s)", name, starts_with_icase(file, maps_dir) ? "" : ", from the game's map folder");
+    return fn::_fopen_s(f, file.data(), mode);
 }
 
 // ── Host: who has assetshare ─────────────────────────────────────────────────────────────────────────────────────
@@ -696,6 +742,19 @@ bool SADK_THISCALL on_request_file(Manager *m, sadk::msvc::string *remote, sadk:
         said = GetTickCount();
         return true;
     }
+    std::string file = file_part(r);
+    if (received_already(m, file)) {
+        static DWORD said;   // as above
+        if (GetTickCount() - said > 30000) {
+            std::string base = file.substr(0, file.size() - 4);
+            room_message("The map " + base + " the host sent is another version than the one it is hosting, so you "
+                         "can't get ready in this game.");
+            room_message("The host should update assetshare, keep only one copy of the map and delete " + base +
+                         ".info and " + base + ".usermapinfo in %LOCALAPPDATA%\\SAdK.");
+        }
+        said = GetTickCount();
+        return true;
+    }
     if (state == State::idle || state == State::waiting_manifest) {   // asked before the manifest: wait for it
         for (auto &dm : deferred_maps)
             if (!_stricmp(dm.first.c_str(), r.c_str())) return true;
@@ -795,6 +854,7 @@ void unpack_map(const Download &d, const std::vector<archive::Entry> &entries, b
         room_message("The map file " + d.name + " could not be unpacked" + (ok ? "." : ": " + error + "."));
         return;
     }
+    note_received_map(d.name);
     char msg[200];
     std::snprintf(msg, sizeof msg, "Map file received: %s%s (%lu KB, %u KB unpacked).", d.name.c_str(),
                   written > 1 ? (" and " + std::to_string(written - 1) + " file(s) of the map").c_str() : "",
@@ -837,8 +897,10 @@ std::int32_t SADK_CDECL on_rename(char *from, char *to)
     Download d = take_pending(to);
     if (ours)
         use_archive(manager(), d, to, rc == 0);
-    else   // a plain map file (a host without assetshare)
+    else {   // a plain map file (a host without assetshare)
+        note_received_map(to + maps_dir.size());
         room_message("Map file received: " + std::string(to + maps_dir.size()) + ".");
+    }
     download_finished();
     return rc;
 }
@@ -935,6 +997,7 @@ void on_session_end(void *)
     host_shares = false;
     pending.clear();
     deferred_maps.clear();
+    received_maps.clear();
     downloaded.clear();
     switched_on.clear();
     switched_off.clear();
@@ -1060,4 +1123,4 @@ bool assetshare_start()
     return ok == 8 && hooks == 5 && subscribed == 3;
 }
 
-SADKMOD_MAIN(assetshare_start, 2, SADKMOD_CLIENT)
+SADKMOD_MAIN(assetshare_start, 3, SADKMOD_CLIENT)
